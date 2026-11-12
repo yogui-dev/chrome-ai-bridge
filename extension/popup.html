@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Antigravity AI Bridge</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="card">
+    <header class="header">
+      <div class="logo">
+        <span class="icon">🤖</span>
+        <span class="title">AI Chrome Bridge</span>
+      </div>
+      <div id="statusBadge" class="badge disconnected">Desconectado</div>
+    </header>
+
+    <div class="section">
+      <label for="serverUrl">Servidor Puente:</label>
+      <div class="input-row">
+        <input type="text" id="serverUrl" value="ws://localhost:9224/ws" spellcheck="false" />
+        <button id="btnReconnect" class="btn primary">Conectar</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <label for="profileName">Perfil de Chrome (Alias / Correo):</label>
+      <div class="input-row">
+        <input type="text" id="profileName" placeholder="Ej: Personal, Trabajo, tu-correo@..." spellcheck="false" />
+        <button id="btnSaveProfile" class="btn primary">Guardar</button>
+      </div>
+      <div id="profileHint" class="hint-text">ID: cargando...</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span>Pestañas Controladas</span>
+        <button id="btnRefresh" class="btn-icon" title="Refrescar">🔄</button>
+      </div>
+      <div id="tabsList" class="tabs-list">
+        <div class="empty-state">No hay pestañas bajo depuración actualmente.</div>
+      </div>
+    </div>
+
+    <div class="section tip-box">
+      <strong>💡 Modo Multi-usuario (Incógnito):</strong>
+      <p>Para probar múltiples usuarios en paralelo, ve a <code>chrome://extensions</code> &gt; <em>Detalles</em> de esta extensión y activa <strong>"Permitir en incógnito"</strong>.</p>
+    </div>
+
+    <footer class="footer">
+      <span>Antigravity AI DevTools • v1.0.0</span>
+    </footer>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

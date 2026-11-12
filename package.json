@@ -1,0 +1,47 @@
+{
+  "name": "chrome-ai-bridge",
+  "version": "1.0.0",
+  "description": "Antigravity AI Chrome Bridge - Live Browser Automation, CDP Debugging & Multi-User Testing",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "cli": "node server/cli.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "keywords": [
+    "chrome",
+    "cdp",
+    "devtools",
+    "automation",
+    "ai-agent",
+    "antigravity",
+    "browser-automation"
+  ],
+  "author": "yogui-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yogui-dev/chrome-ai-bridge.git"
+  },
+  "bin": {
+    "chrome-ai-bridge": "server/cli.js"
+  },
+  "files": [
+    "server",
+    "extension",
+    "README.md",
+    "LICENSE"
+  ],
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.18.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.18.0",
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.22.2"
+  }
+}
