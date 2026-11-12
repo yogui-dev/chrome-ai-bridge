@@ -299,5 +299,70 @@ test('7. Nombre contextual de tarea/idea en pestaña (set_task)', async () => {
   taskWs.close();
 });
 
+test('8. Subida de archivos híbrida (estática y botón dinámico con supresión de diálogo Windows)', async () => {
+  const uploadWs = new WebSocket(WS_URL);
+  await new Promise(r => uploadWs.on('open', r));
+
+  const testTabId = 777123;
+  uploadWs.send(JSON.stringify({
+    type: 'register_profile',
+    profileId: 'prof_upload_test',
+    profileName: 'Upload Test Client',
+    tabs: [{ tabId: testTabId, url: 'https://example.com/composer' }]
+  }));
+
+  await new Promise(r => setTimeout(r, 100));
+
+  uploadWs.on('message', (raw) => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.action === 'upload_file') {
+      const { button, selector, fileName } = msg.params;
+      const isDynamic = Boolean(button || (!selector && !button));
+      uploadWs.send(JSON.stringify({
+        id: msg.id,
+        success: true,
+        result: {
+          uploaded: true,
+          mode: isDynamic ? 'dynamic_button_intercepted' : 'static_input',
+          buttonText: button || 'Add photo/video',
+          fileName,
+          fileCount: 1,
+          fileSize: 1024
+        }
+      }));
+    }
+  });
+
+  // Probar subida dinámica con botón
+  const resDynamic = await fetch(`${BASE_URL}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'upload_file',
+      params: {
+        tabId: testTabId,
+        button: 'Add photo/video',
+        fileName: 'test-image.png',
+        fileDataBase64: Buffer.from('fake image data').toString('base64'),
+        mimeType: 'image/png'
+      }
+    })
+  });
+
+  assert.equal(resDynamic.status, 200);
+  const dataDynamic = await resDynamic.json();
+  assert.equal(dataDynamic.ok, true);
+  assert.equal(dataDynamic.result.mode, 'dynamic_button_intercepted');
+  assert.equal(dataDynamic.result.buttonText, 'Add photo/video');
+
+  // Probar CLI upload con botón
+  const { stdout: cliOutput } = await execAsync(`node server/cli.js upload --tab ${testTabId} --file "package.json" --button "Add photo/video" --profile "Upload Test Client"`);
+  assert.match(cliOutput, /Archivo cargado con éxito/);
+  assert.match(cliOutput, /Intercepción dinámica/);
+  assert.match(cliOutput, /Ventana modal nativa de Windows suprimida/);
+
+  uploadWs.close();
+});
+
 
 

@@ -152,8 +152,11 @@ node server/cli.js click --tab <TAB_ID> --text "Guardar cambios"
 # 11. Rellenar inputs de texto (con auto-wait)
 node server/cli.js type --tab <TAB_ID> --selector "input[name='email']" --text "user@example.com"
 
-# 12. Subir archivos locales
-node server/cli.js upload --tab <TAB_ID> --selector "input[type='file']" --file "./sample-file.pdf"
+# 12. Subir archivos locales (Modo estático tradicional)
+node server/cli.js upload --tab <TAB_ID> --file "./sample-file.pdf" --selector "input[type='file']"
+
+# 13. Subir archivos en SPAs dinámicas (Meta Business Suite, Canva, Drive) suprimiendo la ventana nativa de Windows
+node server/cli.js upload --tab <TAB_ID> --file "./foto.png" --button "Add photo/video" [--profile "Personal"]
 
 # 13. Desplazamiento suave (Smooth Scroll)
 node server/cli.js scroll --tab <TAB_ID> --y 500

@@ -827,19 +827,23 @@ async function scrollTab({ tabId, y = 450, x = 0, behavior = 'smooth' }) {
 }
 
 /**
- * Simula la subida de un archivo a un <input type="file"> usando DataTransfer
+ * Sube un archivo a la página web:
+ * Modo A (Estático): Si se provee `selector` o existe un <input type="file"> en el DOM, se inyecta directamente.
+ * Modo B (Dinámico / Intercepción): Si se especifica `button` (selector o texto) o no hay input estático:
+ *   - Intercepta HTMLInputElement.prototype.click para suprimir la ventana modal nativa de Windows (Explorer).
+ *   - Localiza y hace clic en el botón disparador (ej. "Add photo/video", "Subir archivo", etc.).
+ *   - Al dispararse la llamada a click() del input en memoria, inyecta el archivo vía DataTransfer y dispara eventos 'input' y 'change'.
+ *   - Restaura el prototipo original garantizando que no queden efectos secundarios.
  */
-async function uploadFile({ tabId, selector, fileName, fileDataBase64, mimeType = 'image/png' }) {
-  if (!tabId || !selector || !fileName || !fileDataBase64) {
-    throw new Error('tabId, selector, fileName y fileDataBase64 requeridos');
+async function uploadFile({ tabId, selector = null, button = null, fileName, fileDataBase64, mimeType = 'image/png' }) {
+  if (!tabId || !fileName || !fileDataBase64) {
+    throw new Error('tabId, fileName y fileDataBase64 requeridos');
   }
 
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (sel, name, b64, mime) => {
-      const input = document.querySelector(sel);
-      if (!input) throw new Error(`Input file no encontrado: ${sel}`);
-
+    func: async (sel, btnQuery, name, b64, mime) => {
+      // 1. Convertir Base64 a File
       const byteCharacters = atob(b64);
       const byteNumbers = new Array(byteCharacters.length);
       for (let i = 0; i < byteCharacters.length; i++) {
@@ -849,21 +853,111 @@ async function uploadFile({ tabId, selector, fileName, fileDataBase64, mimeType 
       const blob = new Blob([byteArray], { type: mime });
       const file = new File([blob], name, { type: mime, lastModified: Date.now() });
 
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-      input.files = dataTransfer.files;
-
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-
-      return {
-        uploaded: true,
-        fileName: name,
-        fileCount: input.files.length,
-        fileSize: file.size
+      const assignFilesToInput = (input) => {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        input.files = dataTransfer.files;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
       };
+
+      // Si se especificó selector directo o existe input[type="file"] y no se pidió botón explícito
+      let staticInput = sel ? document.querySelector(sel) : (!btnQuery ? document.querySelector('input[type="file"]') : null);
+
+      if (staticInput && staticInput.tagName === 'INPUT' && staticInput.type === 'file') {
+        assignFilesToInput(staticInput);
+        return {
+          uploaded: true,
+          mode: 'static_input',
+          fileName: name,
+          fileCount: staticInput.files.length,
+          fileSize: file.size
+        };
+      }
+
+      // Modo Dinámico / Interceptación de Botón
+      let targetButton = null;
+      if (btnQuery) {
+        // Intentar primero como selector CSS
+        try {
+          targetButton = document.querySelector(btnQuery);
+        } catch (_) {}
+
+        // Si no se encontró por selector CSS, buscar por texto o aria-label
+        if (!targetButton) {
+          const candidates = Array.from(document.querySelectorAll('button, [role="button"], a, div, span'));
+          targetButton = candidates.find(el => {
+            const text = (el.innerText || '').trim().toLowerCase();
+            const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+            const q = btnQuery.toLowerCase();
+            return (text && text.includes(q)) || (aria && aria.includes(q));
+          });
+        }
+      } else {
+        // Auto-detección de botones de subida comunes
+        const candidates = Array.from(document.querySelectorAll('button, [role="button"]'));
+        targetButton = candidates.find(el => {
+          const text = (el.innerText || '').trim().toLowerCase();
+          const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+          return /add photo|add video|agregar foto|agregar video|subir|upload media|upload file|seleccionar archivo|adjuntar/i.test(text) ||
+                 /add photo|add video|agregar foto|agregar video|subir|upload/i.test(aria);
+        });
+      }
+
+      if (!targetButton) {
+        throw new Error(btnQuery 
+          ? `No se encontró el botón de subida especificado: "${btnQuery}"`
+          : `No se encontró un <input type="file"> estático ni un botón de subida reconocible en la página.`);
+      }
+
+      // Instalar interceptor de click para suprimir la ventana nativa de Windows
+      let capturedInput = null;
+      const originalClick = HTMLInputElement.prototype.click;
+
+      try {
+        HTMLInputElement.prototype.click = function() {
+          if (this.type === 'file') {
+            capturedInput = this;
+            assignFilesToInput(this);
+            return; // Suprimir el diálogo nativo de Windows (Explorer Win32)
+          }
+          return originalClick.apply(this, arguments);
+        };
+
+        // Hacer clic en el botón disparador
+        targetButton.click();
+
+        // Si el botón requiere un tiempo pequeño para instanciar el input
+        if (!capturedInput) {
+          await new Promise(r => setTimeout(r, 200));
+        }
+
+        if (!capturedInput) {
+          // Si el botón no disparó input.click directamente, buscar si se agregó un nuevo input[type="file"] al DOM tras el clic
+          const newlyAdded = document.querySelector('input[type="file"]');
+          if (newlyAdded) {
+            assignFilesToInput(newlyAdded);
+            capturedInput = newlyAdded;
+          }
+        }
+
+        if (!capturedInput) {
+          throw new Error('Se hizo clic en el botón de subida, pero no se detectó la creación de ningún input de archivo.');
+        }
+
+        return {
+          uploaded: true,
+          mode: 'dynamic_button_intercepted',
+          buttonText: targetButton.innerText?.slice(0, 50) || targetButton.getAttribute('aria-label') || 'Botón de subida',
+          fileName: name,
+          fileCount: capturedInput.files ? capturedInput.files.length : 1,
+          fileSize: file.size
+        };
+      } finally {
+        HTMLInputElement.prototype.click = originalClick;
+      }
     },
-    args: [selector, fileName, fileDataBase64, mimeType]
+    args: [selector || null, button || null, fileName, fileDataBase64, mimeType]
   });
 
   return results[0]?.result;

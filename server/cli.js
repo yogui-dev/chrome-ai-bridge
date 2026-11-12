@@ -204,7 +204,7 @@ async function main() {
       }
       const selector = flags.selector;
       const textToMatch = flags.text;
-      const res = await runAction('click', { tabId, selector, textToMatch });
+      const res = await runAction('click', { tabId, selector, textToMatch }, flags.profile);
       if (res && res.tagName) {
         console.log(`✅ Clic ejecutado en elemento <${res.tagName}> (Texto: "${res.text || ''}")`);
       } else {
@@ -224,18 +224,20 @@ async function main() {
         process.exit(1);
       }
 
-      const res = await runAction('type', { tabId, selector, text, clearFirst });
+      const res = await runAction('type', { tabId, selector, text, clearFirst }, flags.profile);
       console.log(`✅ Texto ingresado en "${selector}": "${res?.value ?? text}"`);
       break;
     }
 
     case 'upload': {
       const tabId = parseInt(flags.tab, 10);
-      const selector = flags.selector || 'input[type="file"]';
+      const selector = flags.selector || null;
+      const button = flags.button || null;
       const filePath = flags.file;
+      const profile = flags.profile || null;
 
       if (!tabId || !filePath) {
-        console.error('❌ Faltan argumentos: --tab <id> --file <ruta>');
+        console.error('❌ Faltan argumentos: --tab <id> --file <ruta> [--button <textoOBotón> | --selector <css>]');
         process.exit(1);
       }
 
@@ -253,20 +255,37 @@ async function main() {
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
         '.webp': 'image/webp',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.bmp': 'image/bmp',
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.webm': 'video/webm',
         '.pdf': 'application/pdf',
-        '.json': 'application/json'
+        '.json': 'application/json',
+        '.txt': 'text/plain',
+        '.csv': 'text/csv',
+        '.zip': 'application/zip'
       };
       const mimeType = mimeTypes[ext] || 'application/octet-stream';
 
       const res = await runAction('upload_file', {
         tabId,
         selector,
+        button,
         fileName,
         fileDataBase64,
         mimeType
-      });
+      }, profile);
 
-      console.log(`✅ Archivo simulado cargado con éxito: "${res.fileName}" (${res.fileSize} bytes)`);
+      console.log(`✅ Archivo cargado con éxito: "${res.fileName}" (${res.fileSize} bytes)`);
+      if (res.mode === 'dynamic_button_intercepted') {
+        console.log(`   Modo: Intercepción dinámica (botón: "${res.buttonText}")`);
+        console.log(`   🛡️ Ventana modal nativa de Windows suprimida exitosamente.`);
+      } else {
+        console.log(`   Modo: Inyección directa en <input type="file">`);
+      }
       break;
     }
 
@@ -276,7 +295,7 @@ async function main() {
         console.error('❌ Falta --tab <id>');
         process.exit(1);
       }
-      const res = await runAction('get_dom', { tabId, selector: flags.selector });
+      const res = await runAction('get_dom', { tabId, selector: flags.selector }, flags.profile);
       console.log(`\n=== RESUMEN DOM: [${res.title}] ===`);
       console.log(`URL: ${res.url}\n`);
 
@@ -351,7 +370,7 @@ async function main() {
       }
 
       if (flags.reset) {
-        await runAction('reset_viewport', { tabId });
+        await runAction('reset_viewport', { tabId }, flags.profile);
         console.log(`✅ Vista restablecida al tamaño original en Tab #${tabId}`);
         break;
       }
@@ -360,7 +379,7 @@ async function main() {
       const width = flags.width ? parseInt(flags.width, 10) : undefined;
       const height = flags.height ? parseInt(flags.height, 10) : undefined;
 
-      const res = await runAction('set_viewport', { tabId, preset, width, height });
+      const res = await runAction('set_viewport', { tabId, preset, width, height }, flags.profile);
       console.log(`📱 Modo responsivo activado en Tab #${tabId}:`);
       console.log(`   Preset: ${res.preset}`);
       console.log(`   Resolución: ${res.width}x${res.height} (Mobile: ${res.mobile})`);
@@ -375,7 +394,7 @@ async function main() {
       }
       const y = flags.y ? parseInt(flags.y, 10) : 450;
       const x = flags.x ? parseInt(flags.x, 10) : 0;
-      const res = await runAction('scroll', { tabId, y, x, behavior: 'smooth' });
+      const res = await runAction('scroll', { tabId, y, x, behavior: 'smooth' }, flags.profile);
       console.log(`📜 Desplazamiento suave completado en Tab #${tabId}: (X: ${res.scrollX}, Y: ${res.scrollY})`);
       break;
     }
@@ -386,7 +405,7 @@ async function main() {
         console.error('❌ Falta --tab <id>');
         process.exit(1);
       }
-      const res = await runAction('take_screenshot', { tabId });
+      const res = await runAction('take_screenshot', { tabId }, flags.profile);
       console.log(`✅ Captura de pantalla guardada con éxito:`);
       console.log(`   Ruta: ${res.savedFilePath}`);
       break;
@@ -399,7 +418,7 @@ async function main() {
         console.error('❌ Faltan argumentos: --tab <id> --code "<javascript>"');
         process.exit(1);
       }
-      const res = await runAction('eval_js', { tabId, code });
+      const res = await runAction('eval_js', { tabId, code }, flags.profile);
       if (res.success) {
         console.log('Resultado:', res.value);
       } else {
@@ -415,7 +434,7 @@ async function main() {
         console.error('❌ Falta --tab <id>');
         process.exit(1);
       }
-      await runAction('close_tab', { tabId });
+      await runAction('close_tab', { tabId }, flags.profile);
       console.log(`✅ Tab #${tabId} cerrada.`);
       break;
     }
@@ -435,19 +454,22 @@ Comandos disponibles:
   node server/cli.js tabs [--profile <nombre>]
       Lista las pestañas abiertas en Chrome (filtrando opcionalmente por perfil).
 
-  node server/cli.js open --url <url> [--profile <nombre>] [--session <name>] [--group <title>] [--color <color>] [--incognito]
+  node server/cli.js open --url <url> [--profile <nombre>] [--task <idea>] [--incognito]
       Abre una pestaña en el perfil de Chrome especificado o en modo incógnito.
 
-  node server/cli.js click --tab <id> [--selector <css>] [--text <texto>]
-      Hace clic en un botón o elemento (dirigido automáticamente al perfil dueño del tab).
+  node server/cli.js task --tab <id> --name "<nueva tarea>"
+      Actualiza en caliente la tarea o idea asignada a una pestaña y su título en Chrome.
 
-  node server/cli.js type --tab <id> --selector <css> --text <valor> [--clear false]
-      Escribe texto en un campo de formulario (compatible con React/Vue).
+  node server/cli.js click --tab <id> [--selector <css>] [--text <texto>] [--profile <nombre>]
+      Hace clic en un botón o elemento con animación suave y cursor virtual.
 
-  node server/cli.js upload --tab <id> --file <rutaArchivo> [--selector <css>]
-      Sube un archivo o imagen a un input de tipo file.
+  node server/cli.js type --tab <id> --selector <css> --text <valor> [--clear false] [--profile <nombre>]
+      Escribe texto en un campo de formulario (compatible con React/Vue/Angular).
 
-  node server/cli.js dom --tab <id>
+  node server/cli.js upload --tab <id> --file <rutaArchivo> [--button <texto>] [--selector <css>] [--profile <nombre>]
+      Sube un archivo a un input tradicional o hace clic en un botón suprimiendo la ventana de Windows.
+
+  node server/cli.js dom --tab <id> [--profile <nombre>]
       Lee la estructura de botones, campos de texto, títulos y alertas de la página.
 
   node server/cli.js logs --tab <id>
@@ -456,19 +478,19 @@ Comandos disponibles:
   node server/cli.js network --tab <id>
       Muestra errores HTTP (4xx/5xx) y caídas de red o CORS en vivo.
 
-  node server/cli.js viewport --tab <id> [--preset mobile|tablet] [--reset]
+  node server/cli.js viewport --tab <id> [--preset mobile|tablet|desktop] [--reset] [--profile <nombre>]
       Emula resolución responsive móvil o tablet vía CDP.
 
-  node server/cli.js scroll --tab <id> [--y <pixeles>]
+  node server/cli.js scroll --tab <id> [--y <pixeles>] [--x <pixeles>] [--profile <nombre>]
       Desplaza la página suavemente.
 
-  node server/cli.js screenshot --tab <id>
+  node server/cli.js screenshot --tab <id> [--profile <nombre>]
       Captura la pantalla actual y la guarda en la carpeta 'screenshots/'.
 
-  node server/cli.js eval --tab <id> --code "<js>"
-      Ejecuta JavaScript directamente en la pestaña.
+  node server/cli.js eval --tab <id> --code "<js>" [--profile <nombre>]
+      Ejecuta JavaScript directamente en la pestaña (vía CDP Runtime.evaluate).
 
-  node server/cli.js close --tab <id>
+  node server/cli.js close --tab <id> [--profile <nombre>]
       Cierra la pestaña indicada.
 `);
       break;

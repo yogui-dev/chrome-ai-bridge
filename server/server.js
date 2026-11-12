@@ -60,6 +60,11 @@ function findTargetSocket(targetProfile = null, tabId = null) {
       if (connectedProfiles.has(profId)) {
         return connectedProfiles.get(profId).ws;
       }
+      for (const prof of connectedProfiles.values()) {
+        if (prof.id === profId || prof.name === profId || prof.id.toLowerCase() === String(profId).toLowerCase() || prof.name.toLowerCase() === String(profId).toLowerCase()) {
+          return prof.ws;
+        }
+      }
     }
   }
 
