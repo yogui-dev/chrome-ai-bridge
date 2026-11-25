@@ -1264,6 +1264,9 @@ async function captureScreenshot({ tabId }) {
 
   // 1. Intentar capturar directamente por CDP (no requiere que la pestaña esté al frente)
   try {
+    try {
+      await chrome.debugger.attach({ tabId }, '1.3');
+    } catch {}
     const cdpResult = await new Promise((resolve, reject) => {
       chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format: 'png' }, (res) => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -1279,7 +1282,10 @@ async function captureScreenshot({ tabId }) {
 
   // 2. Fallback con chrome.tabs.captureVisibleTab
   const tab = await chrome.tabs.get(tabId);
-  await chrome.tabs.update(tabId, { active: true });
+  try {
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tabId, { active: true });
+  } catch {}
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
   return { dataUrl, tabId, windowId: tab.windowId };
 }
