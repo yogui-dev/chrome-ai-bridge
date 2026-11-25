@@ -222,3 +222,25 @@ Si el comando arroja `Error: No se puede conectar al servidor en http://localhos
 # Levantar el servidor en segundo plano
 node C:\Proyectos\yoguidev\chrome-ai-bridge\server\server.js
 ```
+
+---
+
+## 🏛️ 6. Arquitectura SOLID y Protocolo de Mejora Continua (Obligatorio)
+
+### Estructura Limpia Desacoplada (`src/`)
+La base de código está estructurada según Clean / Hexagonal Architecture en **JavaScript ESM Nativo** con Inversión de Control:
+- **`src/domain/`**: Entidades y Value Objects puros (`Tab`, `Profile`, `ActionEnvelope`) y contratos / interfaces (`ITransport`, `IProfileRegistry`, `ILogRepository`, `IActionHandler`).
+- **`src/application/`**: Casos de uso atómicos (`ExecuteActionUseCase`, `RegisterProfileUseCase`, `ListProfilesUseCase`) y handlers de acción desacoplados con registro dinámico (`ActionRegistry`, `CreateTabActionHandler`, `ScreenshotActionHandler`, `GenericActionHandler`).
+- **`src/infrastructure/`**: Adaptadores intercambiables (`InMemoryProfileRegistry`, `InMemoryLogRepository`, `LocalFileStorage`, `WsExtensionTransport`, `MockTransport`), contenedor IoC (`Container`) y adaptador HTTP (`HttpServer`).
+- **`src/presentation/cli/`**: CLI desacoplado con `FlagParser`, `CommandRegistry`, `ApiClient` y `CliApp`.
+- **`server/server.js` y `server/cli.js`**: Puntos de entrada delgados que no contienen lógica de negocio.
+
+### Reglas Obligatorias para Agentes al Utilizar la Herramienta:
+1. **Mandato de Mejora Continua:** Siempre que se llame a `chrome-ai-bridge` y se detecte cualquier fricción en la navegación (tiempos de carga, formatos de fecha/hora, componentes web oscuros, selectores elusivos o nuevos tipos de modales), es **OBLIGATORIO** retroalimentar la herramienta: abstraer la solución, añadir el soporte o comando en `src/`, documentarlo en `SKILL.md` y agregar pruebas.
+2. **Extensibilidad Abierta / Cerrada (OCP):**
+   - Para añadir una nueva acción del navegador, crea una clase que implemente `IActionHandler` y regístrala en `ActionRegistry`.
+   - Para añadir un nuevo comando al CLI, regístralo en `CommandRegistry` dentro de `CliApp`.
+3. **Inversión de Dependencias (DIP):** Toda nueva dependencia debe inyectarse a través del `Container` (`src/infrastructure/container/Container.js`).
+4. **Desarrollo Guiado por Pruebas (TDD):** Escribir primero el test unitario en `tests/unit/` (RED), implementar el cambio (GREEN) y verificar que toda la suite (`pnpm test`, 23+ tests) pase al 100% verde antes de cerrar la tarea.
+5. **Commits en Español:** Todo commit y push debe redactarse en español y de forma descriptiva.
+

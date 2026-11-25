@@ -4,41 +4,85 @@ Puente de alta fidelidad entre **Google Chrome** y **Antigravity AI / Claude Cod
 
 ---
 
-## 🏗️ Arquitectura del Sistema
+## 🏗️ Arquitectura del Sistema (Clean Architecture, SOLID & DIP)
+
+El proyecto está diseñado bajo una arquitectura limpia desacoplada (**Clean / Hexagonal Architecture**) en **JavaScript ESM Nativo** con Inversión de Control (**DIP**), principios **SOLID** y desarrollo guiado por pruebas (**TDD**):
 
 ```mermaid
-flowchart LR
-    subgraph Antigravity["🤖 Entorno Antigravity / Claude Code"]
-        CLI["CLI (server/cli.js)"]
-        Agent["Agente AI / Skill chrome-ai-bridge"]
+flowchart TD
+    subgraph Presentation["🎨 Presentación (CLI)"]
+        CliApp["CliApp & CommandRegistry (OCP)"]
+        FlagParser["FlagParser"]
+        ApiClient["ApiClient"]
     end
 
-    subgraph Daemon["⚙️ Servidor Local (Node.js)"]
-        HTTP["HTTP API :9224"]
-        WS["WebSocket Server :9224/ws"]
-        ReqMap["Pending Requests Correlator"]
-        LogsBuf["Logs & Network Events Buffer"]
+    subgraph Application["⚙️ Aplicación (Casos de Uso)"]
+        ExecAction["ExecuteActionUseCase"]
+        RegProfile["RegisterProfileUseCase"]
+        ListProfiles["ListProfilesUseCase"]
+        ActionReg["ActionRegistry (OCP)"]
+        Handlers["Action Handlers (create_tab, take_screenshot, generic)"]
     end
 
-    subgraph Chrome["🌐 Google Chrome (Navegador Principal)"]
-        ExtSW["Service Worker (MV3 background.js)"]
-        CDP["Chrome DevTools Protocol (chrome.debugger)"]
-        DOM["Injected Virtual Cursor & Scripts"]
-        TabGrp["Grupo '🤖 Antigravity AI'"]
+    subgraph Domain["🏛️ Dominio (Puro)"]
+        Entities["Tab, Profile, ActionEnvelope"]
+        Contracts["ITransport, IProfileRegistry, ILogRepository, IActionHandler"]
     end
 
-    Agent --> CLI
-    CLI --> HTTP
-    HTTP --> ReqMap
-    ReqMap --> WS
-    WS <--> ExtSW
-    ExtSW --> CDP
-    ExtSW --> TabGrp
-    CDP --> DOM
-    CDP -. Events: Console & Network .-> ExtSW
-    ExtSW -. Telemetry .-> WS
-    WS --> LogsBuf
+    subgraph Infrastructure["🔌 Infraestructura (Adaptadores)"]
+        Container["IoC Container (Composition Root)"]
+        HttpServer["HttpServer (:9224)"]
+        WsTransport["WsExtensionTransport (:9224/ws)"]
+        InMemoryReg["InMemoryProfileRegistry & InMemoryLogRepository"]
+        FileStorage["LocalFileStorage (screenshots/)"]
+    end
+
+    subgraph Chrome["🌐 Google Chrome Extension (MV3)"]
+        ExtSW["Service Worker (background.js)"]
+        CDP["Chrome DevTools Protocol (CDP)"]
+    end
+
+    CliApp --> FlagParser
+    CliApp --> ApiClient
+    ApiClient --> HttpServer
+    HttpServer --> Container
+    Container --> Application
+    Application --> Domain
+    Infrastructure --> Contracts
+    WsTransport <--> ExtSW
+    ExtSW <--> CDP
 ```
+
+### Principios SOLID Aplicados
+- **SRP (Single Responsibility):** Cada clase, caso de uso o comando tiene una única razón para cambiar.
+- **OCP (Open/Closed):** Nuevas acciones del navegador se incorporan registrando handlers en `ActionRegistry`; nuevos comandos del CLI se agregan a `CommandRegistry` sin modificar los flujos existentes.
+- **LSP (Liskov Substitution):** `WsExtensionTransport` y `MockTransport` son totalmente intercambiables bajo `ITransport` para ejecutar tests sin red en milisegundos.
+- **ISP (Interface Segregation):** Contratos pequeños y específicos para transporte, perfiles y repositorios.
+- **DIP (Dependency Inversion):** Los casos de uso dependen exclusivamente de interfaces/contratos. El `Container` ensambla el grafo de dependencias en tiempo de ejecución.
+
+---
+
+## 🧪 Estrategia de Pruebas (TDD First)
+El proyecto cuenta con una suite completa de **23 pruebas automatizadas** que se ejecutan en ~2 segundos con Node.js test runner nativo (`node:test` y `node:assert/strict`):
+```bash
+# Ejecutar suite completa (unitarios + integración E2E)
+pnpm test
+
+# Ejecutar únicamente pruebas unitarias rápidas con mocks
+pnpm test:unit
+
+# Ejecutar pruebas de integración E2E con WebSocket y HTTP
+pnpm test:integration
+```
+
+---
+
+## 🔄 Mandato Obligatorio de Mejora Continua y Gobernanza
+Cada vez que un asistente de IA o agente interactúe con `chrome-ai-bridge`:
+1. **Detección de Fricción:** Si una página web, formulario o SPA presenta problemas de interacción (tiempos de espera, componentes desacoplados, formatos estrictos), el agente tiene el mandato estricto de **mejorar la herramienta**.
+2. **Abstracción Limpia:** Toda mejora debe integrarse en la arquitectura modular de `src/` respetando SOLID y DIP, sin crear monolitos.
+3. **TDD:** Agregar siempre la prueba unitaria o de integración correspondiente.
+4. **Commits en Español:** Todo commit y push debe ser descriptivo y redactado en español.
 
 ---
 
