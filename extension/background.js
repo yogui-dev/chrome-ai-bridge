@@ -768,10 +768,11 @@ async function typeElement({ tabId, selector, text, clearFirst = true, timeout =
 
       el.focus();
 
-      // Compatibilidad con React 16-19: utilizar el descriptor nativo del prototipo
-      const nativeSetter =
-        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set ||
-        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+      // Compatibilidad con React 16-19: utilizar el descriptor nativo del prototipo correspondiente
+      const proto = (el instanceof HTMLTextAreaElement)
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
       const finalVal = clear ? val : (el.value || '') + val;
 

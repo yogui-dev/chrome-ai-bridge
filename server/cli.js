@@ -279,6 +279,11 @@ async function main() {
         mimeType
       }, profile);
 
+      if (!res) {
+        console.error('❌ Error: La extensión no devolvió confirmación de subida.');
+        process.exit(1);
+      }
+
       console.log(`✅ Archivo cargado con éxito: "${res.fileName}" (${res.fileSize} bytes)`);
       if (res.mode === 'dynamic_button_intercepted') {
         console.log(`   Modo: Intercepción dinámica (botón: "${res.buttonText}")`);
