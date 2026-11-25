@@ -1,0 +1,555 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { FlagParser } from './FlagParser.js';
+import { CommandRegistry } from './CommandRegistry.js';
+import { ApiClient } from './ApiClient.js';
+
+export class CliApp {
+  constructor(api = new ApiClient()) {
+    this.api = api;
+    this.registry = new CommandRegistry();
+    this._registerCommands();
+  }
+
+  _registerCommands() {
+    // 1. status / health
+    this.registry.register({
+      name: 'status',
+      aliases: ['health'],
+      execute: async (flags) => {
+        const status = await this.api.callApi('/status');
+        console.log('--- ESTADO DE CHROME BRIDGE ---');
+        console.log(`Servidor activo:      Puerto ${status.port}`);
+        console.log(`Extensión conectada:  ${status.extensionConnected ? '✅ SÍ' : '❌ NO'}`);
+        console.log(`Perfiles activos:     ${status.profilesCount ?? (status.extensionConnected ? 1 : 0)}`);
+        console.log(`Pestañas bajo control: ${status.tabsCount}`);
+
+        if (status.profiles && status.profiles.length > 0) {
+          console.log('\n👤 Perfiles de Chrome conectados:');
+          status.profiles.forEach((p, idx) => {
+            console.log(`  [${idx + 1}] "${p.name}" (ID: ${p.id}) — ${p.tabsCount} pestaña(s)`);
+            if (p.tabs && p.tabs.length > 0) {
+              p.tabs.forEach(t => {
+                const taskLabel = t.task ? ` 🎯 [${t.task}]` : '';
+                console.log(`      • [Tab #${t.tabId}]${taskLabel} ${t.groupTitle || t.sessionName} (${t.incognito ? 'Incógnito' : 'Normal'})`);
+                console.log(`        URL: ${t.url}`);
+              });
+            }
+          });
+        } else if (status.tabs && status.tabs.length > 0) {
+          console.log('\nPestañas activas:');
+          status.tabs.forEach(t => {
+            const taskLabel = t.task ? ` 🎯 [${t.task}]` : '';
+            console.log(`  • [Tab #${t.tabId}]${taskLabel} ${t.groupTitle || t.sessionName} (${t.incognito ? 'Incógnito' : 'Normal'})`);
+            console.log(`    URL: ${t.url}`);
+          });
+        }
+      }
+    });
+
+    // 2. profiles / list-profiles
+    this.registry.register({
+      name: 'profiles',
+      aliases: ['list-profiles'],
+      execute: async () => {
+        const data = await this.api.callApi('/profiles');
+        console.log(`\n=== PERFILES DE CHROME CONECTADOS (${data.count}) ===`);
+        if (data.count === 0) {
+          console.log('No hay extensiones de Chrome registradas.');
+          console.log('Abre Chrome y verifica que la extensión esté cargada y conectada.');
+        } else {
+          data.profiles.forEach((p, idx) => {
+            console.log(`  ${idx + 1}. [${p.name}] ID: ${p.id} (${p.tabsCount} pestaña(s) controladas)`);
+          });
+        }
+      }
+    });
+
+    // 3. tabs / list-all
+    this.registry.register({
+      name: 'tabs',
+      aliases: ['list-all'],
+      execute: async (flags) => {
+        const tabs = await this.api.runAction('list_all_tabs', {}, flags.profile);
+        const profileLabel = flags.profile ? ` [Perfil: ${flags.profile}]` : '';
+        console.log(`\n=== TODAS LAS PESTAÑAS ABIERTAS EN CHROME${profileLabel} (${tabs.length}) ===`);
+        tabs.forEach(t => {
+          const flagManaged = t.isManaged ? ' [🤖 GESTIONADA]' : '';
+          const flagActive = t.active ? ' [ACTIVA]' : '';
+          console.log(`  • Tab #${t.tabId}${flagActive}${flagManaged}`);
+          console.log(`    Título: ${t.title}`);
+          console.log(`    URL:    ${t.url}`);
+        });
+      }
+    });
+
+    // 4. attach
+    this.registry.register({
+      name: 'attach',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const groupTitle = flags.group || '🤖 Antigravity AI';
+        const groupColor = flags.color || 'purple';
+        const sessionName = flags.session || 'user_active';
+
+        console.log(`Uniendo Tab #${tabId} al grupo "${groupTitle}"...`);
+        const res = await this.api.runAction('attach_tab', { tabId, sessionName, groupTitle, groupColor }, flags.profile);
+        console.log(`✅ Pestaña incorporada con éxito al grupo!`);
+        console.log(`   Tab ID: #${res.tabId}`);
+        console.log(`   Grupo:  ${res.groupTitle}`);
+        console.log(`   URL:    ${res.url}`);
+      }
+    });
+
+    // 5. open / open-tab
+    this.registry.register({
+      name: 'open',
+      aliases: ['open-tab'],
+      execute: async (flags) => {
+        const url = flags.url || 'http://localhost:3000';
+        const task = flags.task || flags.idea || flags.name || null;
+        const sessionName = flags.session || 'user_1';
+        const defaultGroup = task ? `🤖 ${task}` : '🤖 Antigravity AI';
+        const groupTitle = flags.group || defaultGroup;
+        const groupColor = flags.color || 'purple';
+        const incognito = Boolean(flags.incognito);
+        const newWindow = Boolean(flags.window);
+        const profileName = flags.profile || null;
+
+        const profLabel = profileName ? ` en perfil "${profileName}"` : '';
+        const taskLabel = task ? ` [Idea: "${task}"]` : '';
+        console.log(`Abriendo pestaña${profLabel}${taskLabel}: ${url} (${incognito ? 'Modo Incógnito' : 'Modo Normal'})...`);
+        const res = await this.api.runAction('create_tab', {
+          url,
+          task,
+          sessionName,
+          groupTitle,
+          groupColor,
+          incognito,
+          newWindow
+        }, profileName);
+        console.log(`✅ Pestaña creada con éxito!`);
+        console.log(`   Tab ID:     #${res.tabId}`);
+        if (res.task) console.log(`   Idea/Tarea: ${res.task}`);
+        console.log(`   Grupo:      ${res.groupTitle} (Color: ${res.groupColor})`);
+        console.log(`   Sesión:     ${res.sessionName}`);
+      }
+    });
+
+    // 6. task / set-task
+    this.registry.register({
+      name: 'task',
+      aliases: ['set-task'],
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        const task = flags.name || flags.task || flags.idea;
+        if (!tabId || !task) {
+          console.error('❌ Faltan argumentos: --tab <id> --name "<idea o tarea a realizar>"');
+          process.exit(1);
+        }
+        const res = await this.api.runAction('set_task', { tabId, task }, flags.profile);
+        console.log(`✅ Idea/Tarea de Tab #${tabId} actualizada a: "${res.task}"`);
+        console.log(`   Grupo en Chrome: "${res.groupTitle}"`);
+      }
+    });
+
+    // 7. click
+    this.registry.register({
+      name: 'click',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
+        const textToMatch = flags.text || null;
+        const res = await this.api.runAction('click', { tabId, selector, textToMatch }, flags.profile);
+        if (res && res.tagName) {
+          console.log(`✅ Clic ejecutado en elemento <${res.tagName}> (Texto: "${res.text || ''}")`);
+        } else {
+          console.log('✅ Clic ejecutado correctamente');
+        }
+      }
+    });
+
+    // 8. wait
+    this.registry.register({
+      name: 'wait',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
+        const textToMatch = flags.text || null;
+        const timeout = flags.timeout ? parseInt(flags.timeout, 10) : 10000;
+
+        if (!tabId || (!selector && !textToMatch)) {
+          console.error('❌ Faltan argumentos: --tab <id> (--selector <css> o --text <texto>) [--timeout <ms>]');
+          process.exit(1);
+        }
+
+        const res = await this.api.runAction('wait_for', { tabId, selector, textToMatch, timeout }, flags.profile);
+        console.log(`✅ Elemento detectado con éxito: <${res?.tagName || 'ELEMENTO'}> (id: "${res?.id || ''}", texto: "${res?.text || ''}")`);
+      }
+    });
+
+    // 9. type
+    this.registry.register({
+      name: 'type',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
+        const text = flags.text ?? '';
+        const clearFirst = flags.clear !== 'false' && flags.clear !== false;
+
+        if (!tabId || !selector) {
+          console.error('❌ Faltan argumentos: --tab <id> --selector <css> --text <valor>');
+          process.exit(1);
+        }
+
+        const res = await this.api.runAction('type', { tabId, selector, text, clearFirst }, flags.profile);
+        console.log(`✅ Texto ingresado en "${selector}": "${res?.value ?? text}"`);
+      }
+    });
+
+    // 10. upload
+    this.registry.register({
+      name: 'upload',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
+        const button = flags.button || null;
+        const filePath = flags.file;
+        const profile = flags.profile || null;
+
+        if (!tabId || !filePath) {
+          console.error('❌ Faltan argumentos: --tab <id> --file <ruta> [--button <textoOBotón> | --selector <css>]');
+          process.exit(1);
+        }
+
+        const fullPath = path.resolve(process.cwd(), filePath);
+        if (!fs.existsSync(fullPath)) {
+          console.error(`❌ Archivo no encontrado: ${fullPath}`);
+          process.exit(1);
+        }
+
+        const fileName = path.basename(fullPath);
+        const fileDataBase64 = fs.readFileSync(fullPath).toString('base64');
+        const ext = path.extname(fullPath).toLowerCase();
+        const mimeTypes = {
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.webp': 'image/webp',
+          '.gif': 'image/gif',
+          '.svg': 'image/svg+xml',
+          '.bmp': 'image/bmp',
+          '.mp4': 'video/mp4',
+          '.mov': 'video/quicktime',
+          '.avi': 'video/x-msvideo',
+          '.webm': 'video/webm',
+          '.pdf': 'application/pdf',
+          '.json': 'application/json',
+          '.txt': 'text/plain',
+          '.csv': 'text/csv',
+          '.zip': 'application/zip'
+        };
+        const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+        const res = await this.api.runAction('upload_file', {
+          tabId,
+          selector,
+          button,
+          fileName,
+          fileDataBase64,
+          mimeType
+        }, profile);
+
+        if (!res) {
+          console.error('❌ Error: La extensión no devolvió confirmación de subida.');
+          process.exit(1);
+        }
+
+        console.log(`✅ Archivo cargado con éxito: "${res.fileName}" (${res.fileSize} bytes)`);
+        if (res.mode === 'dynamic_button_intercepted') {
+          console.log(`   Modo: Intercepción dinámica (botón: "${res.buttonText}")`);
+          console.log(`   🛡️ Ventana modal nativa de Windows suprimida exitosamente.`);
+        } else {
+          console.log(`   Modo: Inyección directa en <input type="file">`);
+        }
+      }
+    });
+
+    // 11. dom
+    this.registry.register({
+      name: 'dom',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const res = await this.api.runAction('get_dom', { tabId, selector: flags.selector }, flags.profile);
+        console.log(`\n=== RESUMEN DOM: [${res.title}] ===`);
+        console.log(`URL: ${res.url}\n`);
+
+        if (res.headings?.length) {
+          console.log('Titulares:');
+          res.headings.forEach(h => console.log(`  • [${h.level}] ${h.text}`));
+        }
+
+        if (res.inputs?.length) {
+          console.log('\nCampos de Entrada:');
+          res.inputs.forEach(i => console.log(`  • <${i.tag} type="${i.type}"> id="${i.id}" name="${i.name}" placeholder="${i.placeholder}" valor="${i.value}"`));
+        }
+
+        if (res.buttons?.length) {
+          console.log('\nBotones Disponibles:');
+          res.buttons.forEach(b => console.log(`  • [${b.tag}] "${b.text}" id="${b.id}" class="${b.className}"`));
+        }
+
+        if (res.alerts?.length) {
+          console.log('\n⚠️ Alertas/Errores detectados en la interfaz:');
+          res.alerts.forEach(a => console.log(`  • ${a.text}`));
+        }
+      }
+    });
+
+    // 12. logs
+    this.registry.register({
+      name: 'logs',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const data = await this.api.callApi(`/logs/${tabId}`);
+        console.log(`\n=== LOGS DE CONSOLA PARA TAB #${tabId} (${data.count} eventos) ===`);
+        data.logs.forEach(l => {
+          const icon = l.level === 'error' ? '❌' : (l.level === 'warning' ? '⚠️' : '📝');
+          const time = new Date(l.timestamp).toLocaleTimeString();
+          console.log(`[${time}] ${icon} [${l.level.toUpperCase()}]: ${l.text}`);
+        });
+      }
+    });
+
+    // 13. network
+    this.registry.register({
+      name: 'network',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const data = await this.api.callApi(`/network/${tabId}`);
+        console.log(`\n=== ERRORES Y PETICIONES DE RED PARA TAB #${tabId} (${data.count} incidentes) ===`);
+        if (data.networkErrors.length === 0) {
+          console.log('✅ No se han detectado errores HTTP (4xx/5xx) ni caídas de conexión.');
+        } else {
+          data.networkErrors.forEach(n => {
+            const time = new Date(n.timestamp).toLocaleTimeString();
+            if (n.status) {
+              console.log(`[${time}] 🌐 [HTTP ${n.status} ${n.statusText}] (${n.resourceType || 'fetch'}):`);
+              console.log(`         URL: ${n.url}`);
+            } else {
+              console.log(`[${time}] ⚠️ [CONEXIÓN/CORS FALLÓ]: ${n.errorText} (${n.resourceType || 'request'})`);
+            }
+          });
+        }
+      }
+    });
+
+    // 14. viewport / responsive
+    this.registry.register({
+      name: 'viewport',
+      aliases: ['responsive'],
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+
+        if (flags.reset) {
+          await this.api.runAction('reset_viewport', { tabId }, flags.profile);
+          console.log(`✅ Vista restablecida al tamaño original en Tab #${tabId}`);
+          return;
+        }
+
+        const preset = flags.preset || 'mobile';
+        const width = flags.width ? parseInt(flags.width, 10) : undefined;
+        const height = flags.height ? parseInt(flags.height, 10) : undefined;
+
+        const res = await this.api.runAction('set_viewport', { tabId, preset, width, height }, flags.profile);
+        console.log(`📱 Modo responsivo activado en Tab #${tabId}:`);
+        console.log(`   Preset: ${res.preset}`);
+        console.log(`   Resolución: ${res.width}x${res.height} (Mobile: ${res.mobile})`);
+      }
+    });
+
+    // 15. scroll
+    this.registry.register({
+      name: 'scroll',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const y = flags.y ? parseInt(flags.y, 10) : 450;
+        const x = flags.x ? parseInt(flags.x, 10) : 0;
+        const res = await this.api.runAction('scroll', { tabId, y, x, behavior: 'smooth' }, flags.profile);
+        console.log(`📜 Desplazamiento suave completado en Tab #${tabId}: (X: ${res.scrollX}, Y: ${res.scrollY})`);
+      }
+    });
+
+    // 16. screenshot
+    this.registry.register({
+      name: 'screenshot',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const res = await this.api.runAction('take_screenshot', { tabId }, flags.profile);
+        console.log(`✅ Captura de pantalla guardada con éxito:`);
+        console.log(`   Ruta: ${res.savedFilePath}`);
+      }
+    });
+
+    // 17. eval
+    this.registry.register({
+      name: 'eval',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        const code = flags.code;
+        if (!tabId || !code) {
+          console.error('❌ Faltan argumentos: --tab <id> --code "<javascript>"');
+          process.exit(1);
+        }
+        const res = await this.api.runAction('eval_js', { tabId, code }, flags.profile);
+        if (res.success) {
+          console.log('Resultado:', res.value);
+        } else {
+          console.error('Error de ejecución:', res.error);
+        }
+      }
+    });
+
+    // 18. dialog
+    this.registry.register({
+      name: 'dialog',
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        const accept = flags.accept !== 'false' && flags.accept !== false;
+        const promptText = flags.text || '';
+        const res = await this.api.runAction('handle_dialog', { tabId, accept, promptText }, flags.profile);
+        console.log(`💬 Diálogo nativo respondido en Tab #${tabId} (Aceptado: ${res.accept})`);
+      }
+    });
+
+    // 19. close / close-tab
+    this.registry.register({
+      name: 'close',
+      aliases: ['close-tab'],
+      execute: async (flags) => {
+        const tabId = parseInt(flags.tab, 10);
+        if (!tabId) {
+          console.error('❌ Falta --tab <id>');
+          process.exit(1);
+        }
+        await this.api.runAction('close_tab', { tabId }, flags.profile);
+        console.log(`✅ Tab #${tabId} cerrada.`);
+      }
+    });
+  }
+
+  showHelp() {
+    console.log(`
+Antigravity Chrome AI Bridge CLI (Soporte Multi-Perfil)
+-------------------------------------------------------
+Comandos disponibles:
+
+  node server/cli.js status
+      Verifica el estado del servidor, los perfiles de Chrome conectados y sus pestañas.
+
+  node server/cli.js profiles
+      Lista todos los perfiles de Chrome conectados (personal, trabajo, etc.).
+
+  node server/cli.js tabs [--profile <nombre>]
+      Lista las pestañas abiertas en Chrome (filtrando opcionalmente por perfil).
+
+  node server/cli.js open --url <url> [--profile <nombre>] [--task <idea>] [--incognito]
+      Abre una pestaña en el perfil de Chrome especificado o en modo incógnito.
+
+  node server/cli.js task --tab <id> --name "<nueva tarea>"
+      Actualiza en caliente la tarea o idea asignada a una pestaña y su título en Chrome.
+
+  node server/cli.js click --tab <id> [--selector <css>] [--text <texto>] [--profile <nombre>]
+      Hace clic en un botón o elemento con animación suave y cursor virtual.
+
+  node server/cli.js wait --tab <id> [--selector <css>] [--text <texto>] [--timeout <ms>] [--profile <nombre>]
+      Espera hasta que un elemento aparezca y sea visible en el DOM o Shadow DOM.
+
+  node server/cli.js type --tab <id> --selector <css> --text <valor> [--clear false] [--profile <nombre>]
+      Escribe texto en un campo de formulario (compatible con React/Vue/Angular).
+
+  node server/cli.js upload --tab <id> --file <rutaArchivo> [--button <texto>] [--selector <css>] [--profile <nombre>]
+      Sube un archivo a un input tradicional o hace clic en un botón suprimiendo la ventana de Windows.
+
+  node server/cli.js dom --tab <id> [--profile <nombre>]
+      Lee la estructura de botones, campos de texto, títulos y alertas de la página.
+
+  node server/cli.js logs --tab <id>
+      Muestra todos los console.log, advertencias y errores capturados en tiempo real.
+
+  node server/cli.js network --tab <id>
+      Muestra errores HTTP (4xx/5xx) y caídas de red o CORS en vivo.
+
+  node server/cli.js viewport --tab <id> [--preset mobile|tablet|desktop] [--reset] [--profile <nombre>]
+      Emula resolución responsive móvil o tablet vía CDP.
+
+  node server/cli.js scroll --tab <id> [--y <pixeles>] [--x <pixeles>] [--profile <nombre>]
+      Desplaza la página suavemente.
+
+  node server/cli.js screenshot --tab <id> [--profile <nombre>]
+      Captura la pantalla actual y la guarda en la carpeta 'screenshots/'.
+
+  node server/cli.js eval --tab <id> --code "<js>" [--profile <nombre>]
+      Ejecuta JavaScript directamente en la pestaña (vía CDP Runtime.evaluate).
+
+  node server/cli.js dialog --tab <id> [--accept true|false] [--text <prompt>] [--profile <nombre>]
+      Maneja o responde a un diálogo nativo de JavaScript (alert, confirm, prompt).
+
+  node server/cli.js close --tab <id> [--profile <nombre>]
+      Cierra la pestaña indicada.
+`);
+  }
+
+  async run(rawArgs = process.argv.slice(2)) {
+    const { command, flags } = FlagParser.parse(rawArgs);
+
+    if (!command) {
+      this.showHelp();
+      return;
+    }
+
+    const cmdHandler = this.registry.resolve(command);
+    if (!cmdHandler) {
+      this.showHelp();
+      return;
+    }
+
+    await cmdHandler.execute(flags);
+  }
+}
