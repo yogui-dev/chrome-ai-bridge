@@ -17,3 +17,9 @@ Ante cualquier solicitud de navegar por internet, visitar páginas web, investig
    - `11:45 p.m.`
    *NUNCA usar formato militar 24h (`14:00`, `18:00`), ya que el dropdown del web component de YouTube Studio reseteará el valor a medianoche (`12:00 a.m.`).*
 3. **Editores Ricos (`contenteditable`):** Para descripciones o títulos multilínea en YouTube Studio, Notion o redes sociales, nunca pasar saltos como `\n` literales escapados. Inyectar saltos de párrafo reales mediante `document.execCommand('insertText')` y despachar eventos `input` y `change`.
+
+## 🔄 Principio de Mejora Continua de la Skill y Herramienta
+Ante cualquier nueva fricción, caso de borde o aprendizaje durante la automatización web (formatos específicos de plataformas, detección de componentes, tiempos de espera, selectores especiales, nuevos tipos de inputs):
+1. **Resolver el caso concreto** en el flujo de trabajo activo.
+2. **Abstraer y consolidar la solución:** Incorporar el nuevo comando, opción o ajuste directamente en el servidor, la extensión, la CLI o la documentación de `SKILL.md`.
+3. **Validar y Sincronizar:** Añadir la prueba correspondiente en `tests/bridge.test.js`, verificar que la suite pase al 100% (`pnpm test`), commitear y pushear los cambios. La herramienta debe salir más robusta tras cada sesión.
