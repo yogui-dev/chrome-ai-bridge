@@ -27,8 +27,11 @@ Debes invocar **MANDATORIAMENTE** esta skill cuando el usuario:
 3. **Cursor Virtual Animado (Glide & Click Realista):** La IA muestra un cursor de mouse SVG visible en pantalla que se desliza fluidamente (curvas Bézier según distancia) hacia el botón o input antes de hacer clic, presionándolo físicamente con animación de retroalimentación táctil y onda pulsante.
 4. **Desplazamiento Suave (Smooth Scroll):** Si el elemento a presionar está fuera de pantalla, la página se desliza suavemente hasta centrarlo y el cursor acompaña la vista.
 5. **Modo Responsivo Móvil / Tablet (CDP Emulation):** Permite cambiar al instante la resolución de la pestaña a vista móvil (iPhone 390x844) o tablet (iPad 768x1024) con eventos táctiles habilitados sin cambiar el tamaño de tu ventana de Windows.
-6. **Auto-wait Inteligente:** Las acciones `click` y `type` esperan automáticamente hasta 5 segundos con polling si un elemento tarda en renderizarse (ideal para Next.js, React 19, Vue).
-7. **Inspector de Red (CDP Network):** Captura en tiempo real respuestas HTTP fallidas (status >= 400), llamadas con errores de CORS y peticiones caídas (`loadingFailed`).
+6. **Auto-wait y Sincronización Dinámica (`wait`):** Sondeo activo configurable por selector CSS o texto visible para esperar modales asíncronos, transiciones o finalización de procesos pesados.
+7. **Soporte Nativo de Editores Ricos (`contenteditable`):** Escribe automáticamente en componentes modernos como YouTube Studio, Notion, Twitter/X o Slack sin requerir scripts manuales.
+8. **Perforación Profunda de Shadow DOM:** Atraviesa recursivamente Web Components abiertos (`tp-yt-*`, `ytcp-*`, Shoelace, Lit, Polymer) para interactuar con botones o inputs encapsulados.
+9. **Evasión Inteligente de Elementos Obsoletos (Stale Elements):** Filtra nodos residuales ocultos (0x0) de modales cerrados en SPAs, interactuando siempre con el elemento visible en primer plano.
+10. **Inspector de Red (CDP Network):** Captura en tiempo real respuestas HTTP fallidas (status >= 400), llamadas con errores de CORS y peticiones caídas (`loadingFailed`).
 
 ---
 
@@ -107,12 +110,25 @@ node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js close --tab <TAB_ID>
 
 ## 🛠️ 4. Automatización e Interacción
 
-### Escribir en inputs / formularios (con Auto-wait y Ripple)
+### Esperar activamente un elemento (Auto-Wait con Timeout)
 ```powershell
-node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js type --tab <TAB_ID> --selector "input[name='email']" --text "test@example.com"
+# Esperar por selector CSS (atraviesa Shadow DOM automáticamente):
+node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js wait --tab <TAB_ID> --selector "button#confirm" [--timeout 10000]
+
+# O esperar por texto visible:
+node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js wait --tab <TAB_ID> --text "Proceso completado" [--timeout 15000]
 ```
 
-### Hacer clic en botones o enlaces (con Cursor Animado y Auto-wait)
+### Escribir en inputs, formularios y editores ricos (`contenteditable`)
+```powershell
+# En un input tradicional:
+node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js type --tab <TAB_ID> --selector "input[name='email']" --text "test@example.com"
+
+# En un editor rico con contenteditable="true" (YouTube Studio, Notion, Twitter/X):
+node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js type --tab <TAB_ID> --selector "#textbox[contenteditable='true']" --text "Mi nuevo título viral"
+```
+
+### Hacer clic en botones o enlaces (con Cursor Animado, Shadow DOM y Evasión Stale)
 ```powershell
 # Por selector CSS:
 node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js click --tab <TAB_ID> --selector "button#submit"
@@ -172,27 +188,25 @@ node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js eval --tab <TAB_ID> --
 * **Problema:** En sitios empresariales como `business.facebook.com`, `twitter.com` o bancos, las inyecciones de script estándar fallan con `Evaluating a string as JavaScript violates the following Content Security Policy directive: script-src ... 'unsafe-eval'`.
 * **Solución de la Skill:** Ejecutar siempre código vía `cli.js eval` o llamadas nativas CDP. La extensión evalúa mediante `Runtime.evaluate` en el protocolo DevTools con `userGesture: true` y `awaitPromise: true`, saltándose por completo el bloqueo de CSP de la página. Si la pestaña se desprendió del debugger, basta abrir una nueva pestaña con `cli.js open` o re-adjuntar con `cli.js attach --tab <id>`.
 
-### B) Formularios y Editores en React / DraftJS / Lexical
-* **Problema:** Asignar `input.value = "..."` o `element.innerText = "..."` no dispara los eventos sintéticos de React y los botones de envío permanecen desactivados.
+### B) Formularios y Editores en React / DraftJS / Lexical / ContentEditable
+* **Problema:** Asignar `input.value = "..."` o `element.innerText = "..."` no dispara los eventos sintéticos de React y los botones de guardado permanecen deshabilitados.
 * **Solución:**
-  1. En inputs de texto estándar, usar siempre `cli.js type` (que utiliza el descriptor del prototipo nativo `HTMLInputElement.prototype.value.set` y emite `input`, `change` y `blur`).
-  2. En editores ricos basados en `contenteditable` (como el compositor de Instagram/Meta o Twitter), enfocar el elemento y usar `document.execCommand('insertText', false, texto)`:
-     ```javascript
-     editor.focus();
-     document.execCommand('selectAll', false, null);
-     document.execCommand('delete', false, null);
-     document.execCommand('insertText', false, textoLargo);
-     ```
+  1. En inputs de texto estándar, `cli.js type` utiliza el descriptor del prototipo nativo `HTMLInputElement.prototype.value.set` y emite `input`, `change` y `blur`.
+  2. En editores ricos con `contenteditable="true"` (como el compositor de YouTube Studio, Instagram o Notion), `cli.js type` detecta automáticamente el nodo editable y ejecuta `document.execCommand('insertText')`, garantizando que el estado interno se actualice sin trucos manuales.
 
-### C) Calendarios y Date Pickers Dinámicos (Evitar Desincronización)
+### C) Perforación Profunda de Shadow DOM y Web Components (Google Apps, Lit, Polymer)
+* **Problema:** `document.querySelector` devuelve `null` al buscar botones o inputs situados dentro de componentes web modernos (ej. `#second-container-expand-button`, `ytcp-video-metadata-editor`).
+* **Solución:** Las acciones `click`, `type`, `wait_for` y `get_dom` de la extensión exploran recursivamente tanto el árbol del DOM como todos los `shadowRoot` abiertos en cascada.
+
+### D) Evasión de Elementos Obsoletos (Stale Elements) en Modales Consecutivos
+* **Problema:** En SPAs con flujos multi-paso o modales recurrentes (ej. subida de múltiples archivos en YouTube Studio), los diálogos anteriores no se destruyen del DOM sino que se ocultan con `0x0` píxeles. Un selector ingenuo hace clic en el diálogo cerrado inactivo.
+* **Solución:** La extensión filtra todos los candidatos verificando su caja de delimitación (`rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden'`), seleccionando siempre el último elemento visible activo en pantalla.
+
+### E) Calendarios y Date Pickers Dinámicos (Evitar Desincronización)
 * **Problema:** Al escribir una fecha en texto (`Nov 19, 2026`), los componentes de calendario de React mantienen internamente la fecha por defecto.
 * **Solución:** Hacer clic en el input para abrir el calendario flotante nativo y disparar el clic directamente sobre el nodo del día por su atributo `aria-label` (ej. `[aria-label*="19 November 2026"]`), o sobre el botón `Next month` para meses posteriores.
 
-### D) Precisión en Clics: Selectores Atómicos vs Texto
-* **Problema:** En aplicaciones con CSS atómico denso (Meta, Twitter), `cli.js click --text "Guardar"` puede coincidir con un contenedor padre en lugar del botón específico.
-* **Solución:** Para interacciones críticas, inspeccionar el botón con `dom --tab <id>` y usar `--selector` apuntando a clases atómicas o etiquetas hoja (`button`, `span` interno).
-
-### E) Si el Servidor Daemon no Responde (Puerto 9224)
+### F) Si el Servidor Daemon no Responde (Puerto 9224)
 Si el comando arroja `Error: No se puede conectar al servidor en http://localhost:9224`:
 ```powershell
 # Levantar el servidor en segundo plano

@@ -239,6 +239,14 @@ async function handleServerCommand(msg) {
         result = await scrollTab(params);
         break;
 
+      case 'wait_for':
+        result = await waitForElement(params);
+        break;
+
+      case 'handle_dialog':
+        result = await handleJavaScriptDialog(params);
+        break;
+
       default:
         throw new Error(`Acción desconocida: ${action}`);
     }
@@ -543,16 +551,53 @@ async function clickElement({ tabId, selector, textToMatch, timeout = 5000 }) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func: async (sel, text, timeoutMs) => {
+      // Helper para búsqueda profunda en Light DOM y Shadow DOM con prioridad en elementos visibles
+      function findTargetElement(querySel, queryText, requireVisible = true) {
+        function searchDeep(root) {
+          let elements = [];
+          if (querySel) {
+            try {
+              elements.push(...root.querySelectorAll(querySel));
+            } catch (_) {}
+          } else if (queryText) {
+            const candidates = Array.from(root.querySelectorAll('button, a, input, [role="button"], span, div, p, label, ytcp-button, tp-yt-paper-button, [role="radio"], [role="menuitem"], [role="option"], ytcp-icon-button'));
+            const q = queryText.toLowerCase();
+            elements.push(...candidates.filter(c => {
+              const content = (c.innerText || c.value || c.getAttribute('aria-label') || '').trim().toLowerCase();
+              return content.includes(q);
+            }));
+          }
+
+          const children = root.children || root.childNodes || [];
+          for (const child of children) {
+            if (child.shadowRoot) {
+              elements.push(...searchDeep(child.shadowRoot));
+            }
+          }
+          return elements;
+        }
+
+        const all = searchDeep(document);
+        if (all.length === 0) return null;
+
+        if (requireVisible) {
+          const visible = all.filter(el => {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          });
+          if (visible.length > 0) return visible[visible.length - 1];
+        }
+
+        return all[all.length - 1];
+      }
+
       // 1. Auto-wait con polling hasta timeoutMs
       const startTime = Date.now();
       let el = null;
 
       while (Date.now() - startTime < timeoutMs) {
-        if (sel) el = document.querySelector(sel);
-        if (!el && text) {
-          const candidates = Array.from(document.querySelectorAll('button, a, input[type="submit"], input[type="button"], [role="button"], span, div, p, label'));
-          el = candidates.find(c => c.textContent && c.textContent.trim().toLowerCase().includes(text.toLowerCase()));
-        }
+        el = findTargetElement(sel, text, true);
         if (el) break;
         await new Promise(r => setTimeout(r, 60));
       }
@@ -676,12 +721,45 @@ async function typeElement({ tabId, selector, text, clearFirst = true, timeout =
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func: async (sel, val, clear, timeoutMs) => {
+      // Helper para búsqueda profunda en Light DOM y Shadow DOM con prioridad en elementos visibles
+      function findTargetElement(querySel, requireVisible = true) {
+        function searchDeep(root) {
+          let elements = [];
+          if (querySel) {
+            try {
+              elements.push(...root.querySelectorAll(querySel));
+            } catch (_) {}
+          }
+          const children = root.children || root.childNodes || [];
+          for (const child of children) {
+            if (child.shadowRoot) {
+              elements.push(...searchDeep(child.shadowRoot));
+            }
+          }
+          return elements;
+        }
+
+        const all = searchDeep(document);
+        if (all.length === 0) return null;
+
+        if (requireVisible) {
+          const visible = all.filter(el => {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          });
+          if (visible.length > 0) return visible[visible.length - 1];
+        }
+
+        return all[all.length - 1];
+      }
+
       // 1. Auto-wait con polling
       const startTime = Date.now();
       let el = null;
 
       while (Date.now() - startTime < timeoutMs) {
-        el = document.querySelector(sel);
+        el = findTargetElement(sel, true);
         if (el) break;
         await new Promise(r => setTimeout(r, 60));
       }
@@ -767,6 +845,18 @@ async function typeElement({ tabId, selector, text, clearFirst = true, timeout =
       cursor.style.transform = 'scale(1.0)';
 
       el.focus();
+
+      // Compatibilidad con campos enriquecidos contenteditable (YouTube Studio, Discord, Notion, Slack, Twitter/X)
+      if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+        if (clear) {
+          document.execCommand('selectAll', false, null);
+        }
+        document.execCommand('insertText', false, val);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        return { typed: true, value: (el.innerText || el.textContent || '').slice(0, 100), isContentEditable: true, selector: sel };
+      }
 
       // Compatibilidad con React 16-19: utilizar el descriptor nativo del prototipo correspondiente
       const proto = (el instanceof HTMLTextAreaElement)
@@ -965,6 +1055,85 @@ async function uploadFile({ tabId, selector = null, button = null, fileName, fil
 }
 
 /**
+ * Espera a que un elemento aparezca y sea visible en el DOM o Shadow DOM
+ */
+async function waitForElement({ tabId, selector = null, textToMatch = null, timeout = 10000, visibleOnly = true }) {
+  if (!tabId) throw new Error('tabId requerido');
+  if (!selector && !textToMatch) throw new Error('selector o textToMatch requerido');
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (sel, text, timeoutMs, reqVis) => {
+      function findTargetElement(querySel, queryText, requireVisible) {
+        function searchDeep(root) {
+          let elements = [];
+          if (querySel) {
+            try {
+              elements.push(...root.querySelectorAll(querySel));
+            } catch (_) {}
+          } else if (queryText) {
+            const candidates = Array.from(root.querySelectorAll('button, a, input, [role="button"], span, div, p, label, ytcp-button, tp-yt-paper-button, [role="radio"], [role="menuitem"], [role="option"], ytcp-icon-button'));
+            const q = queryText.toLowerCase();
+            elements.push(...candidates.filter(c => {
+              const content = (c.innerText || c.value || c.getAttribute('aria-label') || '').trim().toLowerCase();
+              return content.includes(q);
+            }));
+          }
+
+          const children = root.children || root.childNodes || [];
+          for (const child of children) {
+            if (child.shadowRoot) {
+              elements.push(...searchDeep(child.shadowRoot));
+            }
+          }
+          return elements;
+        }
+
+        const all = searchDeep(document);
+        if (all.length === 0) return null;
+
+        if (requireVisible) {
+          const visible = all.filter(el => {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          });
+          if (visible.length > 0) return visible[visible.length - 1];
+        }
+
+        return all[all.length - 1];
+      }
+
+      const startTime = Date.now();
+      let el = null;
+
+      while (Date.now() - startTime < timeoutMs) {
+        el = findTargetElement(sel, text, reqVis);
+        if (el) break;
+        await new Promise(r => setTimeout(r, 60));
+      }
+
+      if (!el) {
+        throw new Error(`Elemento no encontrado tras esperar ${timeoutMs}ms (selector: "${sel}", text: "${text}")`);
+      }
+
+      const rect = el.getBoundingClientRect();
+      return {
+        found: true,
+        tagName: el.tagName,
+        id: el.id || null,
+        className: el.className || null,
+        text: (el.innerText || el.value || el.getAttribute('aria-label') || '').slice(0, 100),
+        visible: rect.width > 0 && rect.height > 0
+      };
+    },
+    args: [selector || null, textToMatch || null, timeout, visibleOnly]
+  });
+
+  return results[0]?.result;
+}
+
+/**
  * Extrae un resumen estructurado del DOM (para que el modelo "entienda" la pantalla)
  */
 async function getDOMSummary({ tabId, selector }) {
@@ -993,6 +1162,18 @@ async function getDOMSummary({ tabId, selector }) {
         value: i.type === 'password' ? '***' : (i.value || ''),
         required: i.required || false
       }));
+
+      // Incluir campos contenteditable (YouTube Studio, Discord, Notion, Slack, Twitter/X)
+      const editables = Array.from(root.querySelectorAll('[contenteditable="true"]')).map(e => ({
+        tag: e.tagName.toLowerCase(),
+        type: 'contenteditable',
+        name: e.getAttribute('name') || null,
+        id: e.id || null,
+        placeholder: e.getAttribute('aria-label') || e.getAttribute('placeholder') || null,
+        value: (e.innerText || '').slice(0, 100),
+        required: false
+      }));
+      inputs.push(...editables);
 
       const headings = Array.from(root.querySelectorAll('h1, h2, h3')).map(h => ({
         level: h.tagName.toLowerCase(),
@@ -1193,6 +1374,18 @@ async function resetViewport({ tabId }) {
   return { reset: true, tabId };
 }
 
+/**
+ * Maneja o responde a un diálogo JavaScript nativo (alert, confirm, prompt, beforeunload) vía CDP
+ */
+async function handleJavaScriptDialog({ tabId, accept = true, promptText = '' }) {
+  if (!tabId) throw new Error('tabId requerido');
+  await chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', {
+    accept: Boolean(accept),
+    promptText: promptText || undefined
+  });
+  return { success: true, tabId, accept };
+}
+
 // ---------------------------------------------------------
 // Escucha de Eventos CDP (Console logs, Runtime exceptions, Network)
 // ---------------------------------------------------------
@@ -1291,6 +1484,34 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
         networkError: netEntry
       });
     }
+  } else if (method === 'Page.javascriptDialogOpening') {
+    const { message, type, defaultPrompt } = params;
+    console.log(`[AI Bridge] 💬 Diálogo JS detectado en Tab #${tabId} (${type}): "${message}". Auto-aceptando...`);
+
+    // Auto-aceptar diálogo nativo vía CDP para evitar congelamiento de ejecución
+    chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', {
+      accept: true,
+      promptText: defaultPrompt || ''
+    }).catch(err => {
+      console.warn(`[AI Bridge] Error respondiendo diálogo JS en Tab #${tabId}:`, err.message);
+    });
+
+    const dialogEntry = {
+      type: 'js_dialog',
+      dialogType: type,
+      message,
+      autoAccepted: true,
+      timestamp: Date.now()
+    };
+    tabInfo.logs = tabInfo.logs || [];
+    tabInfo.logs.push(dialogEntry);
+
+    sendMessage({
+      type: 'tab_dialog',
+      tabId,
+      sessionName: tabInfo.sessionName,
+      dialog: dialogEntry
+    });
   }
 });
 

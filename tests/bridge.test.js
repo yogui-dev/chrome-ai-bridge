@@ -364,5 +364,70 @@ test('8. Subida de archivos híbrida (estática y botón dinámico con supresió
   uploadWs.close();
 });
 
+test('9. Auto-Wait (wait_for): Espera activa de elementos en DOM y Shadow DOM', async () => {
+  const waitWs = new WebSocket(WS_URL);
+  const testTabId = 444111;
+
+  await new Promise(resolve => waitWs.on('open', resolve));
+
+  // Registrar cliente de prueba con su pestaña
+  waitWs.send(JSON.stringify({
+    type: 'register_profile',
+    profileId: 'prof_wait_test',
+    profileName: 'Wait Test Client',
+    tabs: [{ tabId: testTabId, url: 'https://example.com/wait-test' }]
+  }));
+
+  await new Promise(r => setTimeout(r, 100));
+
+  waitWs.on('message', (raw) => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.action === 'wait_for') {
+      const { textToMatch } = msg.params;
+      waitWs.send(JSON.stringify({
+        id: msg.id,
+        success: true,
+        result: {
+          found: true,
+          tagName: 'BUTTON',
+          id: 'confirm-modal-btn',
+          className: 'btn-primary',
+          text: textToMatch || 'Confirmar',
+          visible: true
+        }
+      }));
+    }
+  });
+
+  try {
+    // Probar endpoint HTTP /action wait_for
+    const res = await fetch(`${BASE_URL}/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'wait_for',
+        params: {
+          tabId: testTabId,
+          selector: '#confirm-modal-btn',
+          timeout: 3000
+        }
+      })
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.ok, true);
+    assert.equal(data.result.found, true);
+    assert.equal(data.result.tagName, 'BUTTON');
+
+    // Probar CLI wait
+    const { stdout: cliOut } = await execAsync(`node server/cli.js wait --tab ${testTabId} --selector "#confirm-modal-btn" --profile "Wait Test Client"`);
+    assert.match(cliOut, /Elemento detectado con éxito/);
+    assert.match(cliOut, /confirm-modal-btn/);
+  } finally {
+    waitWs.close();
+  }
+});
+
 
 

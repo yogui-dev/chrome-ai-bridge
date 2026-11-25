@@ -202,8 +202,8 @@ async function main() {
         console.error('❌ Falta --tab <id>');
         process.exit(1);
       }
-      const selector = flags.selector;
-      const textToMatch = flags.text;
+      const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
+      const textToMatch = flags.text || null;
       const res = await runAction('click', { tabId, selector, textToMatch }, flags.profile);
       if (res && res.tagName) {
         console.log(`✅ Clic ejecutado en elemento <${res.tagName}> (Texto: "${res.text || ''}")`);
@@ -213,9 +213,25 @@ async function main() {
       break;
     }
 
+    case 'wait': {
+      const tabId = parseInt(flags.tab, 10);
+      const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
+      const textToMatch = flags.text || null;
+      const timeout = flags.timeout ? parseInt(flags.timeout, 10) : 10000;
+
+      if (!tabId || (!selector && !textToMatch)) {
+        console.error('❌ Faltan argumentos: --tab <id> (--selector <css> o --text <texto>) [--timeout <ms>]');
+        process.exit(1);
+      }
+
+      const res = await runAction('wait_for', { tabId, selector, textToMatch, timeout }, flags.profile);
+      console.log(`✅ Elemento detectado con éxito: <${res?.tagName || 'ELEMENTO'}> (id: "${res?.id || ''}", texto: "${res?.text || ''}")`);
+      break;
+    }
+
     case 'type': {
       const tabId = parseInt(flags.tab, 10);
-      const selector = flags.selector;
+      const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
       const text = flags.text ?? '';
       const clearFirst = flags.clear !== 'false' && flags.clear !== false;
 
@@ -231,7 +247,7 @@ async function main() {
 
     case 'upload': {
       const tabId = parseInt(flags.tab, 10);
-      const selector = flags.selector || null;
+      const selector = flags.selector ? String(flags.selector).replace(/^['"]|['"]$/g, '') : null;
       const button = flags.button || null;
       const filePath = flags.file;
       const profile = flags.profile || null;
@@ -432,6 +448,19 @@ async function main() {
       break;
     }
 
+    case 'dialog': {
+      const tabId = parseInt(flags.tab, 10);
+      if (!tabId) {
+        console.error('❌ Falta --tab <id>');
+        process.exit(1);
+      }
+      const accept = flags.accept !== 'false' && flags.accept !== false;
+      const promptText = flags.text || '';
+      const res = await runAction('handle_dialog', { tabId, accept, promptText }, flags.profile);
+      console.log(`💬 Diálogo nativo respondido en Tab #${tabId} (Aceptado: ${res.accept})`);
+      break;
+    }
+
     case 'close':
     case 'close-tab': {
       const tabId = parseInt(flags.tab, 10);
@@ -468,6 +497,9 @@ Comandos disponibles:
   node server/cli.js click --tab <id> [--selector <css>] [--text <texto>] [--profile <nombre>]
       Hace clic en un botón o elemento con animación suave y cursor virtual.
 
+  node server/cli.js wait --tab <id> [--selector <css>] [--text <texto>] [--timeout <ms>] [--profile <nombre>]
+      Espera hasta que un elemento aparezca y sea visible en el DOM o Shadow DOM.
+
   node server/cli.js type --tab <id> --selector <css> --text <valor> [--clear false] [--profile <nombre>]
       Escribe texto en un campo de formulario (compatible con React/Vue/Angular).
 
@@ -494,6 +526,9 @@ Comandos disponibles:
 
   node server/cli.js eval --tab <id> --code "<js>" [--profile <nombre>]
       Ejecuta JavaScript directamente en la pestaña (vía CDP Runtime.evaluate).
+
+  node server/cli.js dialog --tab <id> [--accept true|false] [--text <prompt>] [--profile <nombre>]
+      Maneja o responde a un diálogo nativo de JavaScript (alert, confirm, prompt).
 
   node server/cli.js close --tab <id> [--profile <nombre>]
       Cierra la pestaña indicada.
