@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server/server.js",
     "cli": "node server/cli.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js tests/unit/**/*.test.js",
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "test:integration": "node --test tests/bridge.test.js"
   },
   "keywords": [
     "chrome",
