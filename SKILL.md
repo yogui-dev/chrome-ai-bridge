@@ -206,7 +206,17 @@ node C:\Proyectos\yoguidev\chrome-ai-bridge\server\cli.js eval --tab <TAB_ID> --
 * **Problema:** Al escribir una fecha en texto (`Nov 19, 2026`), los componentes de calendario de React mantienen internamente la fecha por defecto.
 * **Solución:** Hacer clic en el input para abrir el calendario flotante nativo y disparar el clic directamente sobre el nodo del día por su atributo `aria-label` (ej. `[aria-label*="19 November 2026"]`), o sobre el botón `Next month` para meses posteriores.
 
-### F) Si el Servidor Daemon no Responde (Puerto 9224)
+### F) Formatos Estrictos de Fecha y Hora en YouTube Studio (Chile / Español)
+* **Formato de Fecha:** Obligatoriamente `D mmm YYYY` en minúsculas (ejemplo: `26 nov 2026`). Si se envía en formato ISO (`2026-11-26`) o numérico con barras (`26/11/2026`), YouTube Studio no lo reconoce o lo resetea.
+* **Formato de Hora:** Obligatoriamente formato 12 horas con minutos y sufijo `a.m.` / `p.m.` en minúsculas con puntos:
+  - `2:00 p.m.` (14:00 hrs)
+  - `12:00 p.m.` (12:00 hrs mediodía)
+  - `4:30 a.m.` (04:30 hrs madrugada)
+  - `12:00 a.m.` (00:00 hrs medianoche)
+  - `11:45 p.m.` (23:45 hrs noche)
+* **Regla de Automatización:** NUNCA enviar formato de 24 horas (`14:00`, `18:00`) ni mayúsculas (`PM` / `AM`), ya que el dropdown del web component de YouTube (`tp-yt-paper-item` en el selector de hora) requiere coincidencia exacta con `\u202f` (espacio estrecho) o el texto localizado del selector.
+
+### G) Si el Servidor Daemon no Responde (Puerto 9224)
 Si el comando arroja `Error: No se puede conectar al servidor en http://localhost:9224`:
 ```powershell
 # Levantar el servidor en segundo plano
